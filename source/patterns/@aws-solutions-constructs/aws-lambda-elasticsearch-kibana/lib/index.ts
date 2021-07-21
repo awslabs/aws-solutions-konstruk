@@ -19,6 +19,7 @@ import * as defaults from '@aws-solutions-constructs/core';
 import { Construct } from '@aws-cdk/core';
 import { Role } from '@aws-cdk/aws-iam';
 import * as cloudwatch from '@aws-cdk/aws-cloudwatch';
+import * as ec2 from "@aws-cdk/aws-ec2";
 
 /**
  * @summary The properties for the CognitoToApiGatewayToLambda Construct
@@ -66,6 +67,20 @@ export interface LambdaToElasticSearchAndKibanaProps {
    * @default - None
    */
   readonly domainEndpointEnvironmentVariableName?: string;
+  /**
+   * An existing VPC for the lambda to connect (construct will NOT create a new VPC in this case)
+   */
+  readonly existingVpc?: ec2.IVpc;
+  /**
+   * Properties to override default properties if deployVpc is true
+   */
+  readonly vpcProps?: ec2.VpcProps;
+  /**
+   * Whether to deploy a new VPC
+   *
+   * @default - false
+   */
+  readonly deployVpc?: boolean;
 }
 
 export class LambdaToElasticSearchAndKibana extends Construct {
@@ -76,6 +91,7 @@ export class LambdaToElasticSearchAndKibana extends Construct {
   public readonly elasticsearchRole: iam.Role;
   public readonly lambdaFunction: lambda.Function;
   public readonly cloudwatchAlarms?: cloudwatch.Alarm[];
+  public readonly vpc?: ec2.IVpc;
 
   /**
    * @summary Constructs a new instance of the CognitoToApiGatewayToLambda class.
@@ -89,9 +105,32 @@ export class LambdaToElasticSearchAndKibana extends Construct {
     super(scope, id);
     defaults.CheckProps(props);
 
+    if ((props.deployVpc || props.vpcProps || props.existingVpc) &&
+        (props.lambdaFunctionProps && (props.lambdaFunctionProps.vpc || props.lambdaFunctionProps.vpcSubnets))) {
+      throw new Error("Error - More than 1 VPC specified for Lambda function");
+    }
+
+    if ((props.deployVpc || props.vpcProps || props.existingVpc) &&
+        props.esDomainProps && props.esDomainProps.vpcOptions) {
+      throw new Error("Error - More than 1 VPC specified in the properties");
+    }
+
+    if (props.deployVpc || props.existingVpc) {
+      this.vpc = defaults.buildVpc(scope, {
+        defaultVpcProps: defaults.DefaultIsolatedVpcProps(),
+        existingVpc: props.existingVpc,
+        userVpcProps: props.vpcProps,
+        constructVpcProps: {
+          enableDnsHostnames: true,
+          enableDnsSupport: true,
+        },
+      });
+    }
+
     this.lambdaFunction = defaults.buildLambdaFunction(this, {
       existingLambdaObj: props.existingLambdaObj,
-      lambdaFunctionProps: props.lambdaFunctionProps
+      lambdaFunctionProps: props.lambdaFunctionProps,
+      vpc: this.vpc
     });
 
     // Find the lambda service Role ARN
